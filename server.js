@@ -5,8 +5,8 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const cache = new Map();
 const clients = new Set();
-const CACHE_TTL = { aqi: 5 * 60 * 1000, traffic: 60 * 1000 };
-const REFRESH_MS = { aqi: 5 * 60 * 1000, traffic: 60 * 1000 };
+const CACHE_TTL = { aqi: 5 * 60 * 1000 };
+const REFRESH_MS = { aqi: 5 * 60 * 1000 };
 let upstreamCallCount = 0;
 
 app.use(express.json());
@@ -96,24 +96,6 @@ async function getOpenMeteoAqi(lat, lon, locationId) {
   ]), observed_at: timestamp };
 }
 
-async function getTraffic() {
-  const locationId = process.env.TRAFFIC_LOCATION_ID || 'citypulse-demo';
-  if (!process.env.TOMTOM_API_KEY || process.env.TOMTOM_API_KEY.startsWith('replace_')) throw new Error('Traffic provider setup required: add TOMTOM_API_KEY');
-  const point = `${process.env.AQI_LAT || '42.365'},${process.env.AQI_LON || '-71.055'}`;
-  const flowUrl = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=${point}&unit=KMPH&key=${encodeURIComponent(process.env.TOMTOM_API_KEY)}`;
-  const incidentUrl = `https://api.tomtom.com/traffic/services/5/incidentDetails?bbox=${encodeURIComponent(process.env.TRAFFIC_BBOX || '-71.09,42.34,-71.02,42.39')}&fields={incidents{type,geometry{coordinates},properties{iconCategory,magnitudeOfDelay,events{description}}}}&language=en-GB&timeValidityFilter=present&key=${encodeURIComponent(process.env.TOMTOM_API_KEY)}`;
-  const [flow, incidents] = await Promise.all([fetchWithRetry(flowUrl, { name: 'tomtom-flow' }), fetchWithRetry(incidentUrl, { name: 'tomtom-incidents' })]);
-  const timestamp = new Date().toISOString();
-  const flowData = flow.flowSegmentData || {};
-  const readings = dedupe([
-    normalize('tomtom', locationId, 'current_speed', flowData.currentSpeed, 'km/h', timestamp),
-    normalize('tomtom', locationId, 'free_flow_speed', flowData.freeFlowSpeed, 'km/h', timestamp),
-    normalize('tomtom', locationId, 'congestion_percent', flowData.currentSpeed && flowData.freeFlowSpeed ? (1 - (flowData.currentSpeed / flowData.freeFlowSpeed)) * 100 : null, '% congested', timestamp),
-    normalize('tomtom', locationId, 'incident_count', incidents.incidents?.length || 0, 'incidents', timestamp)
-  ]);
-  return { source: 'tomtom', readings, observed_at: timestamp };
-}
-
 async function refresh(kind, loader) {
   const existing = cache.get(kind);
   if (existing && Date.now() - existing.cachedAt < CACHE_TTL[kind]) return existing.payload;
@@ -128,7 +110,6 @@ async function refresh(kind, loader) {
 }
 
 app.get('/api/aqi', async (_request, response) => response.json(await refresh('aqi', getAqi)));
-app.get('/api/traffic', async (_request, response) => response.json(await refresh('traffic', getTraffic)));
 app.get('/api/stream', (request, response) => {
   response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   response.write('retry: 15000\n\n');
@@ -137,14 +118,14 @@ app.get('/api/stream', (request, response) => {
 });
 
 setInterval(async () => {
-  const updates = await Promise.all([refresh('aqi', getAqi), refresh('traffic', getTraffic)]);
-  const event = `data: ${JSON.stringify({ aqi: updates[0], traffic: updates[1] })}\n\n`;
+  const aqi = await refresh('aqi', getAqi);
+  const event = `data: ${JSON.stringify({ aqi })}\n\n`;
   clients.forEach(client => client.write(event));
-}, Math.min(REFRESH_MS.aqi, REFRESH_MS.traffic));
+}, REFRESH_MS.aqi);
 
 const isEntryPoint = process.argv[1]?.endsWith('server.js');
 if (isEntryPoint) {
   app.listen(port, () => console.info(`CityPulse server listening at http://localhost:${port}`));
 }
 
-export { app, refresh, getAqi, getTraffic };
+export { app, refresh, getAqi };

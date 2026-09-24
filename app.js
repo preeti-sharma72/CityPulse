@@ -10,8 +10,8 @@ function getApiBase() {
 }
 let issues = [...DEMO_ISSUES];
 let supabaseClient = null;
-const telemetryState = { aqi: null, traffic: null };
-const telemetryIntervals = { aqi: 5 * 60 * 1000, traffic: 60 * 1000 };
+const telemetryState = { aqi: null };
+const telemetryIntervals = { aqi: 5 * 60 * 1000 };
 
 function reading(payload, metric) { return payload?.readings?.find(item => item.metric_id === metric); }
 function telemetryTime(payload) { const values = payload?.readings?.map(item => Date.parse(item.timestamp_utc)).filter(Number.isFinite) || []; return values.length ? Math.max(...values) : 0; }
@@ -20,21 +20,14 @@ function telemetryStatus(payload, kind) { return telemetryIsStale(payload, kind)
 function formatUpdated(payload) { const timestamp = telemetryTime(payload); return timestamp ? `Updated ${formatTime(timestamp)}` : 'No reading'; }
 function aqiBand(value) { if (value === null || value === undefined) return ['Unavailable', '']; if (value <= 50) return ['Good', 'band-good']; if (value <= 100) return ['Moderate', 'band-moderate']; if (value <= 150) return ['Unhealthy for sensitive groups', 'band-unhealthy']; if (value <= 200) return ['Unhealthy', 'band-unhealthy']; if (value <= 300) return ['Very unhealthy', 'band-unhealthy']; return ['Hazardous', 'band-unhealthy']; }
 function renderTelemetry(kind, payload, error = '') {
-  const isAqi = kind === 'aqi';
   const content = document.querySelector(`#${kind}-content`);
   const updated = document.querySelector(`#${kind}-updated`);
   const message = document.querySelector(`#${kind}-message`);
   if (!payload?.readings?.length) { const setupRequired = Boolean(error && !payload?.stale); content.className = 'telemetry-message error-text'; content.textContent = error || 'No live readings available.'; updated.innerHTML = `<span class="badge ${setupRequired ? 'badge-setup' : 'badge-demo'}">${setupRequired ? 'SETUP REQUIRED' : 'STALE DATA'}</span>`; message.textContent = setupRequired ? 'Add the provider credentials in the server environment.' : 'Waiting for a fresh upstream reading.'; return; }
   const aqi = reading(payload, 'aqi');
-  if (isAqi) {
-    const [label, bandClass] = aqiBand(aqi?.value);
-    const badge = document.querySelector('#aqi-band'); badge.textContent = label; badge.className = `badge ${bandClass}`;
-    content.className = 'telemetry-values'; content.innerHTML = `<div class="telemetry-value"><small>AQI</small><strong>${aqi?.value ?? '—'}</strong></div><div class="telemetry-value"><small>PM2.5</small><strong>${reading(payload, 'pm2.5')?.value ?? '—'}</strong><small>µg/m³</small></div><div class="telemetry-value"><small>PM10</small><strong>${reading(payload, 'pm10')?.value ?? '—'}</strong><small>µg/m³</small></div>`;
-  } else {
-    const congestion = reading(payload, 'congestion_percent'); const speed = reading(payload, 'current_speed'); const freeFlow = reading(payload, 'free_flow_speed'); const incidents = reading(payload, 'incident_count');
-    content.className = 'telemetry-values'; content.innerHTML = `<div class="telemetry-value"><small>Congestion</small><strong>${congestion ? Math.min(100, Math.max(0, Math.round(congestion.value))) : '—'}%</strong><div class="traffic-meter"><span style="width:${congestion ? Math.min(100, Math.max(0, congestion.value)) : 0}%"></span></div></div><div class="telemetry-value"><small>Speed / free flow</small><strong>${speed?.value ?? '—'} <small>/ ${freeFlow?.value ?? '—'} km/h</small></strong></div><div class="telemetry-value"><small>Incidents</small><strong>${incidents?.value ?? '—'}</strong></div>`;
-    const overlay = document.querySelector('#traffic-overlay'); if (overlay) overlay.textContent = congestion ? `Traffic layer: ${Math.min(100, Math.max(0, Math.round(congestion.value)))}% congested` : 'Traffic layer: unavailable';
-  }
+  const [label, bandClass] = aqiBand(aqi?.value);
+  const badge = document.querySelector('#aqi-band'); badge.textContent = label; badge.className = `badge ${bandClass}`;
+  content.className = 'telemetry-values'; content.innerHTML = `<div class="telemetry-value"><small>AQI</small><strong>${aqi?.value ?? '—'}</strong></div><div class="telemetry-value"><small>PM2.5</small><strong>${reading(payload, 'pm2.5')?.value ?? '—'}</strong><small>µg/m³</small></div><div class="telemetry-value"><small>PM10</small><strong>${reading(payload, 'pm10')?.value ?? '—'}</strong><small>µg/m³</small></div>`;
   updated.innerHTML = `${telemetryStatus(payload, kind)} <span class="muted">${formatUpdated(payload)}</span>`;
   message.textContent = error ? `Using cached data: ${error}` : `Source: ${payload.source || 'configured provider'}`;
   message.className = `telemetry-message ${error || telemetryIsStale(payload, kind) ? 'stale' : 'muted'}`;
@@ -45,7 +38,6 @@ function connectTelemetryStream() {
     window.clearInterval(window.__citypulsePoller);
     window.__citypulsePoller = window.setInterval(() => {
       fetchTelemetry('aqi');
-      fetchTelemetry('traffic');
     }, 60000);
     return;
   }
@@ -55,7 +47,7 @@ function connectTelemetryStream() {
     stream = new EventSource(`${getApiBase()}/stream`);
     stream.onmessage = event => {
       const payload = JSON.parse(event.data);
-      ['aqi', 'traffic'].forEach(kind => {
+      ['aqi'].forEach(kind => {
         if (payload[kind]) {
           telemetryState[kind] = payload[kind];
           renderTelemetry(kind, payload[kind], payload[kind].error);
@@ -67,16 +59,15 @@ function connectTelemetryStream() {
       window.clearInterval(window.__citypulsePoller);
       window.__citypulsePoller = window.setInterval(() => {
         fetchTelemetry('aqi');
-        fetchTelemetry('traffic');
       }, 60000);
     };
   };
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stream?.close(); else { fetchTelemetry('aqi'); fetchTelemetry('traffic'); open(); }
+    if (document.hidden) stream?.close(); else { fetchTelemetry('aqi'); open(); }
   });
   open();
 }
-function loadTelemetry() { fetchTelemetry('aqi'); fetchTelemetry('traffic'); connectTelemetryStream(); }
+function loadTelemetry() { fetchTelemetry('aqi'); connectTelemetryStream(); }
 
 function formatTime(value) { return new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(Math.round((new Date(value) - Date.now()) / 60000), 'minute'); }
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char])); }

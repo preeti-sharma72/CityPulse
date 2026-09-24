@@ -12,7 +12,7 @@ Copy-Item .env.example .env
 npm start
 ```
 
-Open `http://localhost:3000`. The browser never receives the upstream API keys. The proxy uses WAQI first and OpenAQ when `WAQI_TOKEN` is unavailable; traffic uses TomTom Flow and Incident Details.
+Open `http://localhost:3000`. The browser never receives the upstream API keys. The proxy uses WAQI first, OpenAQ when configured, and public Open-Meteo air quality as a no-key fallback; traffic uses TomTom Flow and Incident Details.
 
 The proxy caches AQI for 5 minutes and traffic for 1 minute, retries upstream calls with timeout/backoff, serves the last cached payload during upstream errors or rate limits, logs each upstream call, and broadcasts changes over `/api/stream` using Server-Sent Events. The browser closes the stream while its tab is hidden.
 
@@ -20,7 +20,7 @@ For a deliberate cache-fallback check, start the server with valid credentials, 
 
 ## Environment variables
 
-Copy `.env.example` to `.env` and add `WAQI_TOKEN` and `TOMTOM_API_KEY`. `OPENAQ_API_KEY` is optional for the fallback provider. Keep `.env` uncommitted; it is covered by `.gitignore`. The remaining values identify the demo coordinate and can be adjusted for the target city.
+Copy `.env.example` to `.env` and add `WAQI_TOKEN` and `TOMTOM_API_KEY` for provider-backed readings. `OPENAQ_API_KEY` is optional. Without an AQI key, the dashboard uses Open-Meteo; traffic remains unavailable until `TOMTOM_API_KEY` is configured. Keep `.env` uncommitted; it is covered by `.gitignore`. The remaining values identify the demo coordinate and can be adjusted for the target city.
 
 ## Supabase setup
 
@@ -36,6 +36,33 @@ Copy `.env.example` to `.env` and add `WAQI_TOKEN` and `TOMTOM_API_KEY`. `OPENAQ
 ```
 
 Place that script before `app.js`. Never put a Supabase service-role key in browser code. Replace the placeholder values before using Supabase; the existing dashboard issue stream remains in local demo mode otherwise.
+
+## Deploy to Vercel or Netlify
+
+### Vercel
+
+1. Push this folder to GitHub.
+2. Import the repo in Vercel.
+3. Keep the default framework as `Other` or static deployment.
+4. Set environment variables in the Vercel dashboard:
+   - `WAQI_TOKEN`
+   - `TOMTOM_API_KEY`
+   - `AQI_LAT`
+   - `AQI_LON`
+   - `TRAFFIC_BBOX`
+   - `PORT=3000` (optional for local compatibility)
+5. Use the root folder as the project root.
+6. Deploy. Vercel will serve the static page and the `/api/*` functions from the project.
+
+### Netlify
+
+1. Push this folder to GitHub.
+2. Import the repo in Netlify.
+3. Set the publish directory to the project root.
+4. Add the same environment variables as above in Netlify > Site configuration > Environment variables.
+5. Deploy. Netlify routes `/api/*` to the functions automatically via `netlify.toml`.
+
+The UI will automatically use the Netlify function URL when `window.location.hostname` contains `netlify.app`, and the normal `/api` path elsewhere.
 
 ## Files
 

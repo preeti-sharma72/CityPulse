@@ -5,6 +5,9 @@ const DEMO_ISSUES = [
   { id: 'demo-4', category: 'Traffic', title: 'Signal outage at 4th and Main', description: 'Traffic signal is flashing and creating delays during the morning peak.', location: 'Mid-Town Spine', severity: 'High', status: 'Resolved', created_at: '2026-09-23T17:20:00Z', latitude: 42.372, longitude: -71.071 }
 ];
 const CATEGORIES = ['Water', 'Sanitation/Waste', 'Healthcare', 'Air Quality', 'Traffic'];
+function getApiBase() {
+  return '/api';
+}
 let issues = [...DEMO_ISSUES];
 let supabaseClient = null;
 const telemetryState = { aqi: null, traffic: null };
@@ -21,7 +24,7 @@ function renderTelemetry(kind, payload, error = '') {
   const content = document.querySelector(`#${kind}-content`);
   const updated = document.querySelector(`#${kind}-updated`);
   const message = document.querySelector(`#${kind}-message`);
-  if (!payload?.readings?.length) { content.className = 'telemetry-message error-text'; content.textContent = error || 'No live readings available.'; updated.innerHTML = telemetryStatus(payload, kind); message.textContent = 'Configure server credentials or wait for the upstream service.'; return; }
+  if (!payload?.readings?.length) { const setupRequired = Boolean(error && !payload?.stale); content.className = 'telemetry-message error-text'; content.textContent = error || 'No live readings available.'; updated.innerHTML = `<span class="badge ${setupRequired ? 'badge-setup' : 'badge-demo'}">${setupRequired ? 'SETUP REQUIRED' : 'STALE DATA'}</span>`; message.textContent = setupRequired ? 'Add the provider credentials in the server environment.' : 'Waiting for a fresh upstream reading.'; return; }
   const aqi = reading(payload, 'aqi');
   if (isAqi) {
     const [label, bandClass] = aqiBand(aqi?.value);
@@ -29,15 +32,50 @@ function renderTelemetry(kind, payload, error = '') {
     content.className = 'telemetry-values'; content.innerHTML = `<div class="telemetry-value"><small>AQI</small><strong>${aqi?.value ?? '—'}</strong></div><div class="telemetry-value"><small>PM2.5</small><strong>${reading(payload, 'pm2.5')?.value ?? '—'}</strong><small>µg/m³</small></div><div class="telemetry-value"><small>PM10</small><strong>${reading(payload, 'pm10')?.value ?? '—'}</strong><small>µg/m³</small></div>`;
   } else {
     const congestion = reading(payload, 'congestion_percent'); const speed = reading(payload, 'current_speed'); const freeFlow = reading(payload, 'free_flow_speed'); const incidents = reading(payload, 'incident_count');
-    content.className = 'telemetry-values'; content.innerHTML = `<div class="telemetry-value"><small>Congestion</small><strong>${congestion ? Math.max(0, Math.round(100 - congestion.value)) : '—'}%</strong><div class="traffic-meter"><span style="width:${congestion ? Math.min(100, Math.max(0, 100 - congestion.value)) : 0}%"></span></div></div><div class="telemetry-value"><small>Speed / free flow</small><strong>${speed?.value ?? '—'} <small>/ ${freeFlow?.value ?? '—'} km/h</small></strong></div><div class="telemetry-value"><small>Incidents</small><strong>${incidents?.value ?? '—'}</strong></div>`;
-    const overlay = document.querySelector('#traffic-overlay'); if (overlay) overlay.textContent = congestion ? `Traffic layer: ${Math.max(0, Math.round(100 - congestion.value))}% congested` : 'Traffic layer: unavailable';
+    content.className = 'telemetry-values'; content.innerHTML = `<div class="telemetry-value"><small>Congestion</small><strong>${congestion ? Math.min(100, Math.max(0, Math.round(congestion.value))) : '—'}%</strong><div class="traffic-meter"><span style="width:${congestion ? Math.min(100, Math.max(0, congestion.value)) : 0}%"></span></div></div><div class="telemetry-value"><small>Speed / free flow</small><strong>${speed?.value ?? '—'} <small>/ ${freeFlow?.value ?? '—'} km/h</small></strong></div><div class="telemetry-value"><small>Incidents</small><strong>${incidents?.value ?? '—'}</strong></div>`;
+    const overlay = document.querySelector('#traffic-overlay'); if (overlay) overlay.textContent = congestion ? `Traffic layer: ${Math.min(100, Math.max(0, Math.round(congestion.value)))}% congested` : 'Traffic layer: unavailable';
   }
   updated.innerHTML = `${telemetryStatus(payload, kind)} <span class="muted">${formatUpdated(payload)}</span>`;
   message.textContent = error ? `Using cached data: ${error}` : `Source: ${payload.source || 'configured provider'}`;
   message.className = `telemetry-message ${error || telemetryIsStale(payload, kind) ? 'stale' : 'muted'}`;
 }
-async function fetchTelemetry(kind) { try { const response = await fetch(`/api/${kind}`, { cache: 'no-store' }); const payload = await response.json(); const nextTimestamp = telemetryTime(payload); if (!telemetryState[kind] || nextTimestamp !== telemetryTime(telemetryState[kind]) || payload.stale !== telemetryState[kind].stale) { telemetryState[kind] = payload; renderTelemetry(kind, payload, payload.error); } } catch (error) { renderTelemetry(kind, telemetryState[kind], error.message); } }
-function connectTelemetryStream() { if (!window.EventSource) return; let stream; const open = () => { if (document.hidden) return; stream = new EventSource('/api/stream'); stream.onmessage = event => { const payload = JSON.parse(event.data); ['aqi', 'traffic'].forEach(kind => { if (payload[kind]) { telemetryState[kind] = payload[kind]; renderTelemetry(kind, payload[kind], payload[kind].error); } }); }; stream.onerror = () => stream.close(); }; document.addEventListener('visibilitychange', () => { if (document.hidden) stream?.close(); else { fetchTelemetry('aqi'); fetchTelemetry('traffic'); open(); } }); open(); }
+async function fetchTelemetry(kind) { try { const response = await fetch(`${getApiBase()}/${kind}`, { cache: 'no-store' }); const payload = await response.json(); const nextTimestamp = telemetryTime(payload); if (!telemetryState[kind] || nextTimestamp !== telemetryTime(telemetryState[kind]) || payload.stale !== telemetryState[kind].stale) { telemetryState[kind] = payload; renderTelemetry(kind, payload, payload.error); } } catch (error) { renderTelemetry(kind, telemetryState[kind], error.message); } }
+function connectTelemetryStream() {
+  if (!window.EventSource) {
+    window.clearInterval(window.__citypulsePoller);
+    window.__citypulsePoller = window.setInterval(() => {
+      fetchTelemetry('aqi');
+      fetchTelemetry('traffic');
+    }, 60000);
+    return;
+  }
+  let stream;
+  const open = () => {
+    if (document.hidden) return;
+    stream = new EventSource(`${getApiBase()}/stream`);
+    stream.onmessage = event => {
+      const payload = JSON.parse(event.data);
+      ['aqi', 'traffic'].forEach(kind => {
+        if (payload[kind]) {
+          telemetryState[kind] = payload[kind];
+          renderTelemetry(kind, payload[kind], payload[kind].error);
+        }
+      });
+    };
+    stream.onerror = () => {
+      stream.close();
+      window.clearInterval(window.__citypulsePoller);
+      window.__citypulsePoller = window.setInterval(() => {
+        fetchTelemetry('aqi');
+        fetchTelemetry('traffic');
+      }, 60000);
+    };
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stream?.close(); else { fetchTelemetry('aqi'); fetchTelemetry('traffic'); open(); }
+  });
+  open();
+}
 function loadTelemetry() { fetchTelemetry('aqi'); fetchTelemetry('traffic'); connectTelemetryStream(); }
 
 function formatTime(value) { return new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(Math.round((new Date(value) - Date.now()) / 60000), 'minute'); }

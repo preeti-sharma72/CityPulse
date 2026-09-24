@@ -1,9 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const staticRoot = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const cache = new Map();
@@ -13,7 +10,7 @@ const REFRESH_MS = { aqi: 5 * 60 * 1000, traffic: 60 * 1000 };
 let upstreamCallCount = 0;
 
 app.use(express.json());
-app.use(express.static(staticRoot));
+app.use(express.static(process.cwd()));
 
 function logUpstream(name, url) {
   upstreamCallCount += 1;
@@ -145,7 +142,7 @@ setInterval(async () => {
   clients.forEach(client => client.write(event));
 }, Math.min(REFRESH_MS.aqi, REFRESH_MS.traffic));
 
-const isEntryPoint = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const isEntryPoint = process.argv[1]?.endsWith('server.js');
 if (isEntryPoint) {
   app.listen(port, () => console.info(`CityPulse server listening at http://localhost:${port}`));
 }

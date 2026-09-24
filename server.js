@@ -3,7 +3,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const staticRoot = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const cache = new Map();
@@ -13,7 +13,7 @@ const REFRESH_MS = { aqi: 5 * 60 * 1000, traffic: 60 * 1000 };
 let upstreamCallCount = 0;
 
 app.use(express.json());
-app.use(express.static(__dirname));
+app.use(express.static(staticRoot));
 
 function logUpstream(name, url) {
   upstreamCallCount += 1;
